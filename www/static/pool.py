@@ -1,11 +1,13 @@
 #await表明执行协程
 import sys
 import asyncio
+import logging
+logging.basicConfig(level=logging.INFO)
 import aiomysql
 def log(sql,args=()):
 	logging.info('SQL:%s' %sql)
 def create_pool(**kw):
-	#log.info('create ddatabase connection pool...')
+	logging.info('create ddatabase connection pool...')
 	global __pool
 	__pool=yield from aiomysql.create_pool(
 		host=kw.get('host','localhost'),
