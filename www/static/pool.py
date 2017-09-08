@@ -1,22 +1,23 @@
 #await表明执行协程
+import sys
 import asyncio
 import aiomysql
 def log(sql,args=()):
 	logging.info('SQL:%s' %sql)
-async def create_pool(**kw):
-	logging.info('create ddatabase connection pool...')
+def create_pool(**kw):
+	#log.info('create ddatabase connection pool...')
 	global __pool
 	__pool=yield from aiomysql.create_pool(
 		host=kw.get('host','localhost'),
 		port=kw.get('port',3306),
 		user=kw['user'],
 		password=kw['password'],
-		db=kw['db'],
+		db=kw['database'],
 		charset=kw.get('charset','utf8'),
 		autocommit=kw.get('autocommit',True),
 		maxsize=kw.get('maxsize',10),
 		minsize=kw.get('minsize',1),
-		loop=loop
+		#loop=loop
 
 	)
 async def select(sql,args,size=None):
@@ -30,15 +31,14 @@ async def select(sql,args,size=None):
 			rs=await cur.fetchall()
 		await cur.close()
 		logging.info('rows returned: %s' % len(rs))
-        return rs
+	return rs
 def execute(sql,args):
-	global __pool
 	try:
-		with (await __pool) as conn:
-			cur=await conn.cursor()
-			await cur.execute(sql.replace('?','%s'),args)
-			affected=cur.rowcount
-			await cur.close()
+		with (yield from __pool) as conn:
+			cur = yield from conn.cursor()
+			yield from cur.execute(sql.replace('?', '%s'), args)
+			affected = cur.rowcount
+			yield from cur.close()
 	except BaseException as e:
 		raise e
 	return affected
@@ -59,7 +59,7 @@ class StringFiled(Filed):
 	def __init__(self,name=None,primary_key=False,default=None,ddl='varchar(100)'):
 		super().__init__(name,ddl,primary_key,default)
 class BoooleanFiled(Filed):
-	def __init__(self,name=None,,default=False):
+	def __init__(self,name=None,default=False):
 		super().__init__(name,'boolean',False,default)
 class IntegerFiled(Filed):
 	def __init__(self,name=None,primary_key=False,default=0):
@@ -80,49 +80,49 @@ class ModelMetaClass(type):
 	def __new__(cls,name,bases,attrs): 
     # 因为Model类是基类，所以排除掉，如果你print(name)的话，会依次打印出Model,User,Blog，即
     # 所有的Model子类，因为这些子类通过Model间接继承元类
-    	if name=="Model":
-        	return type.__new__(cls,name,bases,attrs)
+		if name=="Model":
+			return type.__new__(cls,name,bases,attrs)
     # 取出表名，默认与类的名字相同
-    	tableName=attrs.get('__table__',None) or name
-    	logging.info('found model: %s (table: %s)' % (name, tableName))
+		tableName=attrs.get('__table__',None) or name
+		#logging.info('found model: %s (table: %s)' % (name, tableName))
     # 用于存储所有的字段，以及字段值
-    	mappings=dict()
+		mappings=dict()
     # 仅用来存储非主键意外的其它字段，而且只存key
-    	fields=[]
+		fields=[]
     # 仅保存主键的key
-    	primaryKey=None
+		primaryKey=None
     # 注意这里attrs的key是字段名，value是字段实例，不是字段的具体值
     # 比如User类的id=StringField(...) 这个value就是这个StringField的一个实例，而不是实例化
     # 的时候传进去的具体id值
-   		for k,v in attrs.items(): 
+		for k,v in attrs.items(): 
         # attrs同时还会拿到一些其它系统提供的类属性，我们只处理自定义的类属性，所以判断一下
         # isinstance 方法用于判断v是否是一个Field 
-        	if isinstance(v,Field):
-            	mappings[k]=v
-            	if v.primary_key:
-                	if primaryKey:
-                    	raise RuntimeError("Douplicate primary key for field :%s" % key)
-                	primaryKey=k
-            	else:
-                	fields.append(k)
+			if isinstance(v,Filed):
+				mappings[k]=v
+				if v.primary_key:
+					if primaryKey:
+						raise RuntimeError("Douplicate primary key for field :%s" % key)
+					primaryKey=k
+				else:
+					fields.append(k)
     # 保证了必须有一个主键
-    	if not primaryKey:
-        	raise RuntimeError("Primary key not found")
+		if not primaryKey:
+			raise RuntimeError("Primary key not found")
     # 这里的目的是去除类属性，为什么要去除呢，因为我想知道的信息已经记录下来了。
     # 去除之后，就访问不到类属性了，如图
-        for k in  mappings.keys():
-        	attrs.pop(k)
-        escaped_fields=list(map(lambda f:'%s' % f,fields))
-        attrs['__mappings__'] = mappings # 保存属性和列的映射关系
-        attrs['__table__'] = tableName
-        attrs['__primary_key__'] = primaryKey # 主键属性名
-        attrs['__fields__'] = fields # 除主键外的属性名
-        attrs['__select__'] = 'select `%s`, %s from `%s`' % (primaryKey, ', '.join(escaped_fields), tableName)
-        attrs['__insert__'] = 'insert into `%s` (%s, `%s`) values (%s)' % (tableName, ', '.join(escaped_fields), primaryKey, create_args_string(len(escaped_fields) + 1))
-        attrs['__update__'] = 'update `%s` set %s where `%s`=?' % (tableName, ', '.join(map(lambda f: '`%s`=?' % (mappings.get(f).name or f), fields)), primaryKey)
-        attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey)
-        return type.__new__(cls, name, bases, attrs)
-class Model(dict, metaclass=ModelMetaclass):
+		for k in  mappings.keys():
+			attrs.pop(k)
+		escaped_fields=list(map(lambda f:'%s' % f,fields))
+		attrs['__mappings__'] = mappings # 保存属性和列的映射关系
+		attrs['__table__'] = tableName
+		attrs['__primary_key__'] = primaryKey # 主键属性名
+		attrs['__fields__'] = fields # 除主键外的属性名
+		attrs['__select__'] = 'select `%s`, %s from `%s`' % (primaryKey, ', '.join(escaped_fields), tableName)
+		attrs['__insert__'] = 'insert into `%s` (%s, `%s`) values (%s)' % (tableName, ', '.join(escaped_fields), primaryKey, create_args_string(len(escaped_fields) + 1))
+		attrs['__update__'] = 'update `%s` set %s where `%s`=?' % (tableName, ', '.join(map(lambda f: '`%s`=?' % (mappings.get(f).name or f), fields)), primaryKey)
+		attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey)
+		return type.__new__(cls, name, bases, attrs)
+class Model(dict, metaclass=ModelMetaClass):
 
     def __init__(self, **kw):
         super(Model, self).__init__(**kw)
